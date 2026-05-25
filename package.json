@@ -3,10 +3,19 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "timesheet-automator": "./bin/timesheet-automator"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node bin/timesheet-automator"
   },
   "dependencies": {
     "react": "^18.3.1",

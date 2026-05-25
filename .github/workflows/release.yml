@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Package release tarball
+        id: pkg
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NAME="timesheet-automator-${VERSION}"
+          mkdir -p "out/${NAME}"
+          cp -R bin dist package.json README.md "out/${NAME}/"
+          tar -czf "${NAME}.tar.gz" -C out "${NAME}"
+          SHA=$(shasum -a 256 "${NAME}.tar.gz" | awk '{print $1}')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tarball=${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "sha256=${SHA}"         >> "$GITHUB_OUTPUT"
+          echo "## Homebrew formula values" >> "$GITHUB_STEP_SUMMARY"
+          echo '```'                        >> "$GITHUB_STEP_SUMMARY"
+          echo "url    https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${NAME}.tar.gz" >> "$GITHUB_STEP_SUMMARY"
+          echo "sha256 ${SHA}"              >> "$GITHUB_STEP_SUMMARY"
+          echo '```'                        >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.pkg.outputs.tarball }}
+          body: |
+            ## Install
+
+            ```
+            brew install eyasluna/tap/timesheet-automator
+            timesheet-automator
+            ```
+
+            **Tarball sha256:** `${{ steps.pkg.outputs.sha256 }}`
