@@ -3,11 +3,11 @@ import { useState, useCallback } from "react";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
 function randomizeHours(totalHours, numDays = 5, maxPerDay = 11) {
-  // Distribute totalHours across numDays in 0.25 increments.
+  // Distribute totalHours across numDays in 1-hour increments.
   // Each day in [0, maxPerDay]. Works for any total from 0 up to numDays * maxPerDay.
   const hours = Array(numDays).fill(0);
-  const target = Math.max(0, Math.round(totalHours * 4));
-  const cap = Math.round(maxPerDay * 4);
+  const target = Math.max(0, Math.round(totalHours));
+  const cap = Math.round(maxPerDay);
 
   let placed = 0;
   let safety = target * 10;
@@ -18,7 +18,7 @@ function randomizeHours(totalHours, numDays = 5, maxPerDay = 11) {
       placed += 1;
     }
   }
-  return hours.map(q => q / 4);
+  return hours;
 }
 
 function getTimeFromHours(startHour, durationHours) {
@@ -71,7 +71,7 @@ function generateTimesheetRows(totalHoursW1, totalHoursW2, startDate, lunchMins 
   });
 }
 
-function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW2) {
+function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW2, supervisor) {
   const week1 = rows.filter(r => r.weekNum === 1);
   const week2 = rows.filter(r => r.weekNum === 2);
 
@@ -82,7 +82,7 @@ function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW
       <td>${r.start}</td>
       <td>${r.end}</td>
       <td>${r.lunch}</td>
-      <td>${r.hours.toFixed(2)}</td>
+      <td>${r.hours}</td>
     </tr>
   `).join("");
 
@@ -109,8 +109,9 @@ function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW
   .grand-total { margin-top: 24px; text-align: right; padding: 14px 16px; background: #1a1a2e; color: #f0e6d3; font-size: 15px; display: inline-block; float: right; }
   .grand-total span { font-size: 22px; font-weight: bold; margin-left: 10px; }
   .footer { margin-top: 60px; clear: both; border-top: 1px solid #ddd; padding-top: 16px; display: flex; justify-content: space-between; font-size: 11px; color: #999; }
-  .sig { margin-top: 40px; }
-  .sig-line { border-bottom: 1px solid #999; width: 200px; display: inline-block; margin-right: 40px; }
+  .sig { margin-top: 60px; display: flex; justify-content: space-between; }
+  .sig-group { display: flex; align-items: flex-end; }
+  .sig-line { border-bottom: 1px solid #999; width: 160px; margin-right: 8px; }
 </style>
 </head>
 <body>
@@ -122,6 +123,7 @@ function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW
     <div class="meta">
       <div><strong>Employee:</strong> ${name || "—"}</div>
       <div><strong>Employer:</strong> ${employer || "—"}</div>
+      <div><strong>Supervisor:</strong> ${supervisor || "—"}</div>
       <div><strong>Period:</strong> ${period}</div>
       <div><strong>Generated:</strong> ${new Date().toLocaleDateString()}</div>
     </div>
@@ -132,7 +134,7 @@ function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW
     <thead><tr><th>Day</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Lunch</th><th>Hours</th></tr></thead>
     <tbody>
       ${tableRows(week1)}
-      <tr class="total-row"><td colspan="5">Week 1 Total</td><td>${totalHoursW1.toFixed(2)}</td></tr>
+      <tr class="total-row"><td colspan="5">Week 1 Total</td><td>${totalHoursW1}</td></tr>
     </tbody>
   </table>
 
@@ -141,16 +143,21 @@ function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW
     <thead><tr><th>Day</th><th>Date</th><th>Time In</th><th>Time Out</th><th>Lunch</th><th>Hours</th></tr></thead>
     <tbody>
       ${tableRows(week2)}
-      <tr class="total-row"><td colspan="5">Week 2 Total</td><td>${totalHoursW2.toFixed(2)}</td></tr>
+      <tr class="total-row"><td colspan="5">Week 2 Total</td><td>${totalHoursW2}</td></tr>
     </tbody>
   </table>
 
-  <div class="grand-total">Biweekly Total<span>${(totalHoursW1 + totalHoursW2).toFixed(2)} hrs</span></div>
+  <div class="grand-total">Biweekly Total<span>${totalHoursW1 + totalHoursW2} hrs</span></div>
 
-  <div class="sig" style="margin-top:60px">
-    <span class="sig-line"></span><span style="font-size:12px;color:#666">Employee Signature &amp; Date</span>
-    &nbsp;&nbsp;&nbsp;&nbsp;
-    <span class="sig-line"></span><span style="font-size:12px;color:#666">Supervisor Signature &amp; Date</span>
+  <div class="sig">
+    <div class="sig-group">
+      <span class="sig-line"></span>
+      <span style="font-size:12px;color:#666">Employee Signature</span>
+    </div>
+    <div class="sig-group">
+      <span class="sig-line"></span>
+      <span style="font-size:12px;color:#666">Supervisor Signature</span>
+    </div>
   </div>
 
   <div class="footer">
@@ -164,6 +171,7 @@ function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW
 export default function TimesheetApp() {
   const [name, setName] = useState("");
   const [employer, setEmployer] = useState("");
+  const [supervisor, setSupervisor] = useState("");
   const [w1Hours, setW1Hours] = useState(10);
   const [w2Hours, setW2Hours] = useState(10);
   const [lunch, setLunch] = useState(30);
@@ -184,11 +192,11 @@ export default function TimesheetApp() {
     const endDate = new Date(sd);
     endDate.setDate(endDate.getDate() + 13);
     const period = `${sd.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-    const html = generatePDFHTML(newRows, name, employer, period, w1Hours, w2Hours);
+    const html = generatePDFHTML(newRows, name, employer, period, w1Hours, w2Hours, supervisor);
     setPreview(html);
     setRows(newRows);
     setTab("preview");
-  }, [name, employer, w1Hours, w2Hours, lunch, startDate]);
+  }, [name, employer, w1Hours, w2Hours, lunch, startDate, supervisor]);
 
   const downloadPDF = () => {
     const blob = new Blob([preview], { type: "text/html" });
@@ -272,6 +280,7 @@ export default function TimesheetApp() {
                 <div style={sectionLabel}>Employee Info</div>
                 <Field label="Your Name" value={name} onChange={setName} placeholder="Jane Smith" />
                 <Field label="Employer / Company" value={employer} onChange={setEmployer} placeholder="Acme Corp" />
+                <Field label="Supervisor's Name" value={supervisor} onChange={setSupervisor} placeholder="John Doe" />
               </div>
 
               <div style={cardStyle}>
@@ -385,7 +394,7 @@ function DayCard({ row }) {
     <div style={{ background: "#13132a", borderRadius: 6, padding: "10px 10px 8px", border: "1px solid #2a2a4a" }}>
       <div style={{ fontSize: 9, letterSpacing: 1, textTransform: "uppercase", color: "#666688" }}>{row.dayName.slice(0,3)}</div>
       <div style={{ fontSize: 11, color: "#8888aa", marginBottom: 6 }}>{row.date}</div>
-      <div style={{ fontSize: 16, fontWeight: "bold", color: "#f0e6d3" }}>{row.hours.toFixed(1)}<span style={{ fontSize: 10, color: "#666688" }}>h</span></div>
+      <div style={{ fontSize: 16, fontWeight: "bold", color: "#f0e6d3" }}>{row.hours}<span style={{ fontSize: 10, color: "#666688" }}>h</span></div>
       <div style={{ fontSize: 10, color: "#5555aa", marginTop: 3 }}>{row.start}–{row.end}</div>
     </div>
   );
@@ -411,6 +420,7 @@ function ActionBtn({ onClick, icon, label, secondary }) {
 
 function Field({ label, value, onChange, placeholder, type = "text", options }) {
   const inputStyle = {
+    boxSizing: "border-box",
     width: "100%",
     padding: "9px 12px",
     background: "#0f0f1a",
@@ -444,7 +454,7 @@ function HoursSlider({ label, value, onChange }) {
         <label style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "#8888aa" }}>{label}</label>
         <span style={{ fontSize: 16, fontWeight: "bold", color: "#f0a040" }}>{value}h</span>
       </div>
-      <input type="range" min={0} max={55} step={0.5} value={value}
+      <input type="range" min={0} max={55} step={1} value={value}
         onChange={e => onChange(Number(e.target.value))}
         style={{ width: "100%", accentColor: "#f0a040" }} />
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#555577", marginTop: 2 }}>
