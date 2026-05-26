@@ -135,3 +135,42 @@ jobs:
             ```
 
             **Tarball sha256:** `${{ steps.pkg.outputs.sha256 }}`
+
+      - name: Bump Homebrew tap formula
+        if: steps.bump.outputs.type != 'skip'
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          SHA256: ${{ steps.pkg.outputs.sha256 }}
+          TARBALL: ${{ steps.pkg.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "TAP_TOKEN secret not set — skipping tap bump."
+            exit 0
+          fi
+
+          TAP_DIR="$(mktemp -d)/homebrew-tap"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/Eyasluna/homebrew-tap.git" "${TAP_DIR}"
+          cd "${TAP_DIR}"
+
+          FORMULA="Formula/timesheet-automator.rb"
+          NEW_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${TARBALL}"
+
+          # Replace url and sha256 lines. Pipe delimiter avoids escaping slashes in the URL.
+          sed -i -E "s|^(  url )\".*\"|\\1\"${NEW_URL}\"|"   "${FORMULA}"
+          sed -i -E "s|^(  sha256 )\".*\"|\\1\"${SHA256}\"|" "${FORMULA}"
+
+          echo "--- Updated formula ---"
+          grep -E "^  (url|sha256) " "${FORMULA}"
+
+          if git diff --quiet "${FORMULA}"; then
+            echo "Formula already up to date — nothing to commit."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "timesheet-automator ${VERSION}"
+          git push
