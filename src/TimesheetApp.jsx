@@ -1,4 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
+
+const SIGNATURE_STORAGE_KEY = "ts-signature-v1";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -71,7 +73,8 @@ function generateTimesheetRows(totalHoursW1, totalHoursW2, startDate, lunchMins 
   });
 }
 
-function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW2, supervisor) {
+function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW2, supervisor, signature) {
+  const signedDate = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   const week1 = rows.filter(r => r.weekNum === 1);
   const week2 = rows.filter(r => r.weekNum === 2);
 
@@ -109,9 +112,12 @@ function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW
   .grand-total { margin-top: 24px; text-align: right; padding: 14px 16px; background: #1a1a2e; color: #f0e6d3; font-size: 15px; display: inline-block; float: right; }
   .grand-total span { font-size: 22px; font-weight: bold; margin-left: 10px; }
   .footer { margin-top: 60px; clear: both; border-top: 1px solid #ddd; padding-top: 16px; display: flex; justify-content: space-between; font-size: 11px; color: #999; }
-  .sig { margin-top: 60px; display: flex; justify-content: space-between; }
-  .sig-group { display: flex; align-items: flex-end; }
-  .sig-line { border-bottom: 1px solid #999; width: 160px; margin-right: 8px; }
+  .sig { margin-top: 80px; display: flex; justify-content: space-between; gap: 40px; clear: both; }
+  .sig-group { flex: 0 0 240px; }
+  .sig-img-slot { height: 56px; display: flex; align-items: flex-end; padding-left: 8px; }
+  .sig-img { max-width: 200px; max-height: 56px; display: block; }
+  .sig-line { border-bottom: 1px solid #999; height: 0; }
+  .sig-label { font-size: 12px; color: #666; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -151,12 +157,14 @@ function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW
 
   <div class="sig">
     <div class="sig-group">
-      <span class="sig-line"></span>
-      <span style="font-size:12px;color:#666">Employee Signature</span>
+      <div class="sig-img-slot">${signature ? `<img src="${signature}" class="sig-img" alt="Employee signature" />` : ""}</div>
+      <div class="sig-line"></div>
+      <div class="sig-label">Employee Signature${signature ? ` &nbsp;·&nbsp; ${signedDate}` : ""}</div>
     </div>
     <div class="sig-group">
-      <span class="sig-line"></span>
-      <span style="font-size:12px;color:#666">Supervisor Signature</span>
+      <div class="sig-img-slot"></div>
+      <div class="sig-line"></div>
+      <div class="sig-label">Supervisor Signature</div>
     </div>
   </div>
 
@@ -185,6 +193,18 @@ export default function TimesheetApp() {
   const [preview, setPreview] = useState(null);
   const [rows, setRows] = useState(null);
   const [tab, setTab] = useState("setup");
+  const [signature, setSignatureState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return window.localStorage.getItem(SIGNATURE_STORAGE_KEY) || ""; } catch { return ""; }
+  });
+
+  const setSignature = useCallback((value) => {
+    setSignatureState(value || "");
+    try {
+      if (value) window.localStorage.setItem(SIGNATURE_STORAGE_KEY, value);
+      else window.localStorage.removeItem(SIGNATURE_STORAGE_KEY);
+    } catch {}
+  }, []);
 
   const generate = useCallback(() => {
     const sd = new Date(startDate + "T00:00:00");
@@ -192,11 +212,11 @@ export default function TimesheetApp() {
     const endDate = new Date(sd);
     endDate.setDate(endDate.getDate() + 13);
     const period = `${sd.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-    const html = generatePDFHTML(newRows, name, employer, period, w1Hours, w2Hours, supervisor);
+    const html = generatePDFHTML(newRows, name, employer, period, w1Hours, w2Hours, supervisor, signature);
     setPreview(html);
     setRows(newRows);
     setTab("preview");
-  }, [name, employer, w1Hours, w2Hours, lunch, startDate, supervisor]);
+  }, [name, employer, w1Hours, w2Hours, lunch, startDate, supervisor, signature]);
 
   const downloadPDF = () => {
     const blob = new Blob([preview], { type: "text/html" });
@@ -288,6 +308,11 @@ export default function TimesheetApp() {
                 <Field label="Period Start (Monday)" value={startDate} onChange={setStartDate} type="date" />
                 <Field label="Lunch Break" value={lunch} onChange={v => setLunch(Number(v))} type="select"
                   options={[{v:0,l:"No lunch"},{v:30,l:"30 minutes"},{v:45,l:"45 minutes"},{v:60,l:"60 minutes"}]} />
+              </div>
+
+              <div style={cardStyle}>
+                <div style={sectionLabel}>Signature</div>
+                <SignatureCard signature={signature} onChange={setSignature} />
               </div>
             </div>
 
@@ -478,3 +503,167 @@ const sectionLabel = {
   color: "#f0a040",
   marginBottom: 16,
 };
+
+function SignatureCard({ signature, onChange }) {
+  const [mode, setMode] = useState("idle"); // "idle" | "drawing"
+  const fileRef = useRef(null);
+
+  const handleFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      alert("Please choose an image file (PNG or JPG).");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => onChange(String(reader.result || ""));
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  if (signature && mode === "idle") {
+    return (
+      <div>
+        <div style={{
+          background: "#fff", borderRadius: 6, padding: 10, marginBottom: 12,
+          display: "flex", justifyContent: "center", alignItems: "center", minHeight: 80,
+        }}>
+          <img src={signature} alt="signature" style={{ maxWidth: "100%", maxHeight: 80 }} />
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <SigBtn onClick={() => setMode("drawing")} label="Re-draw" />
+          <SigBtn onClick={() => fileRef.current?.click()} label="Upload new" />
+          <SigBtn onClick={() => onChange("")} label="Clear" danger />
+        </div>
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleFile} />
+        <p style={{ fontSize: 11, color: "#666688", marginTop: 10, lineHeight: 1.5 }}>
+          Saved locally — appears on every generated timesheet.
+        </p>
+      </div>
+    );
+  }
+
+  if (mode === "drawing") {
+    return (
+      <SignaturePad
+        onSave={(dataUrl) => { onChange(dataUrl); setMode("idle"); }}
+        onCancel={() => setMode("idle")}
+      />
+    );
+  }
+
+  return (
+    <div>
+      <p style={{ fontSize: 13, color: "#8888aa", lineHeight: 1.6, marginBottom: 12 }}>
+        Draw your signature or upload a scanned image. Stored only on this machine.
+      </p>
+      <div style={{ display: "flex", gap: 8 }}>
+        <SigBtn onClick={() => setMode("drawing")} label="✎ Draw" />
+        <SigBtn onClick={() => fileRef.current?.click()} label="⬆ Upload image" />
+      </div>
+      <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleFile} />
+    </div>
+  );
+}
+
+function SigBtn({ onClick, label, danger }) {
+  return (
+    <button onClick={onClick} style={{
+      flex: 1,
+      padding: "8px 10px",
+      background: danger ? "transparent" : "#1a1a3e",
+      border: `1px solid ${danger ? "#6a2a2a" : "#3a3a6a"}`,
+      borderRadius: 6,
+      color: danger ? "#ee8888" : "#e8ddd0",
+      fontSize: 12,
+      fontFamily: "Georgia, serif",
+      cursor: "pointer",
+    }}>{label}</button>
+  );
+}
+
+function SignaturePad({ onSave, onCancel }) {
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+  const lastRef = useRef(null);
+  const [isEmpty, setIsEmpty] = useState(true);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // Set internal resolution to match displayed size × devicePixelRatio for crisp lines
+    const ratio = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * ratio;
+    canvas.height = rect.height * ratio;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(ratio, ratio);
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#1a1a2e";
+  }, []);
+
+  const pointAt = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const onDown = (e) => {
+    e.preventDefault();
+    drawingRef.current = true;
+    lastRef.current = pointAt(e);
+    canvasRef.current.setPointerCapture(e.pointerId);
+  };
+  const onMove = (e) => {
+    if (!drawingRef.current) return;
+    const ctx = canvasRef.current.getContext("2d");
+    const p = pointAt(e);
+    ctx.beginPath();
+    ctx.moveTo(lastRef.current.x, lastRef.current.y);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    lastRef.current = p;
+    if (isEmpty) setIsEmpty(false);
+  };
+  const onUp = () => { drawingRef.current = false; };
+
+  const clear = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setIsEmpty(true);
+  };
+
+  const save = () => {
+    if (isEmpty) return;
+    onSave(canvasRef.current.toDataURL("image/png"));
+  };
+
+  return (
+    <div>
+      <div style={{
+        background: "#fff", borderRadius: 6, marginBottom: 10,
+        border: "1px dashed #3a3a6a",
+      }}>
+        <canvas
+          ref={canvasRef}
+          style={{ display: "block", width: "100%", height: 140, touchAction: "none", cursor: "crosshair" }}
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
+          onPointerCancel={onUp}
+          onPointerLeave={onUp}
+        />
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <SigBtn onClick={save} label="✓ Save" />
+        <SigBtn onClick={clear} label="Clear" />
+        <SigBtn onClick={onCancel} label="Cancel" danger />
+      </div>
+      <p style={{ fontSize: 11, color: "#666688", marginTop: 8 }}>
+        Draw with your trackpad, mouse, or finger.
+      </p>
+    </div>
+  );
+}
