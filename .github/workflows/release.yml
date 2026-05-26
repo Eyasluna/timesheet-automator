@@ -75,11 +75,32 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
-          # npm version creates a commit and tag; -m adds a clean message
-          NEW=$(npm version ${{ steps.bump.outputs.type }} -m "chore(release): v%s")
-          echo "version=${NEW#v}" >> "$GITHUB_OUTPUT"
-          echo "tag=${NEW}"        >> "$GITHUB_OUTPUT"
-          echo "Bumped to ${NEW}"
+
+          # Compute what the next version *would* be without creating a commit/tag.
+          # This lets us detect re-runs where the tag already exists upstream.
+          # npm version always prints output with a leading "v", so use as-is.
+          CANDIDATE=$(npm version ${{ steps.bump.outputs.type }} --no-git-tag-version)
+          # Roll the package.json change back; we'll re-do it properly below if needed.
+          git checkout -- package.json package-lock.json 2>/dev/null || true
+
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/${CANDIDATE}" >/dev/null \
+             || git ls-remote --tags origin "${CANDIDATE}" | grep -q "${CANDIDATE}"; then
+            echo "Tag ${CANDIDATE} already exists — treating this run as a recovery."
+            echo "Falling back to current package.json version (no new bump)."
+            EXISTING="v$(node -p "require('./package.json').version")"
+            echo "version=${EXISTING#v}" >> "$GITHUB_OUTPUT"
+            echo "tag=${EXISTING}"       >> "$GITHUB_OUTPUT"
+            echo "fresh=false"           >> "$GITHUB_OUTPUT"
+            # Make sure the working tree is on that tag's commit so packaging matches.
+            git checkout "${EXISTING}"
+          else
+            NEW=$(npm version ${{ steps.bump.outputs.type }} -m "chore(release): v%s")
+            echo "version=${NEW#v}" >> "$GITHUB_OUTPUT"
+            echo "tag=${NEW}"        >> "$GITHUB_OUTPUT"
+            echo "fresh=true"        >> "$GITHUB_OUTPUT"
+            echo "Bumped to ${NEW}"
+          fi
 
       - name: Build
         if: steps.bump.outputs.type != 'skip'
@@ -107,7 +128,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Push commit and tag
-        if: steps.bump.outputs.type != 'skip'
+        if: steps.bump.outputs.type != 'skip' && steps.ver.outputs.fresh == 'true'
         run: |
           git push origin HEAD:main
           git push origin "${{ steps.ver.outputs.tag }}"
