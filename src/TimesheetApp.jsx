@@ -73,6 +73,29 @@ function generateTimesheetRows(totalHoursW1, totalHoursW2, startDate, lunchMins 
   });
 }
 
+function resolvePeriod(anchorISO, mode) {
+  // A biweekly period spans 14 days (start .. start+13). Given one anchor date
+  // and whether it's the start or end, derive both endpoints.
+  const anchor = new Date(anchorISO + "T00:00:00");
+  let start, end;
+  if (mode === "end") {
+    end = anchor;
+    start = new Date(anchor);
+    start.setDate(start.getDate() - 13);
+  } else {
+    start = anchor;
+    end = new Date(anchor);
+    end.setDate(end.getDate() + 13);
+  }
+  return { start, end };
+}
+
+function shiftISO(anchorISO, days) {
+  const d = new Date(anchorISO + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
 function buildFileBase(name, endDate) {
   // e.g. "Jane Smith" + period ending 2026-06-07 -> "Jane_Smith_timesheet_2026-06-07"
   const date = endDate.toISOString().split("T")[0];
@@ -194,13 +217,22 @@ export default function TimesheetApp() {
   const [w1Hours, setW1Hours] = useState(10);
   const [w2Hours, setW2Hours] = useState(10);
   const [lunch, setLunch] = useState(30);
-  const [startDate, setStartDate] = useState(() => {
+  const [dateMode, setDateMode] = useState("start"); // "start" | "end"
+  const [anchorDate, setAnchorDate] = useState(() => {
     const d = new Date();
     const day = d.getDay();
     const diff = d.getDate() - day + (day === 0 ? -6 : 1);
     d.setDate(diff);
     return d.toISOString().split("T")[0];
   });
+
+  // Switch the anchor between start/end while keeping the same underlying period.
+  // start -> end: anchor becomes start+13; end -> start: anchor becomes end-13.
+  const switchDateMode = useCallback((mode) => {
+    if (mode === dateMode) return;
+    setAnchorDate((a) => shiftISO(a, mode === "end" ? 13 : -13));
+    setDateMode(mode);
+  }, [dateMode]);
   const [preview, setPreview] = useState(null);
   const [rows, setRows] = useState(null);
   const [tab, setTab] = useState("setup");
@@ -219,10 +251,12 @@ export default function TimesheetApp() {
   }, []);
 
   const generate = useCallback(() => {
-    const sd = new Date(startDate + "T00:00:00");
+    if (!anchorDate || Number.isNaN(new Date(anchorDate + "T00:00:00").getTime())) {
+      alert(`Please choose a valid ${dateMode === "start" ? "period start" : "period end"} date.`);
+      return;
+    }
+    const { start: sd, end: endDate } = resolvePeriod(anchorDate, dateMode);
     const newRows = generateTimesheetRows(w1Hours, w2Hours, sd, lunch);
-    const endDate = new Date(sd);
-    endDate.setDate(endDate.getDate() + 13);
     const period = `${sd.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
     const base = buildFileBase(name, endDate);
     const html = generatePDFHTML(newRows, name, employer, period, w1Hours, w2Hours, supervisor, signature, base);
@@ -230,7 +264,7 @@ export default function TimesheetApp() {
     setRows(newRows);
     setFileBase(base);
     setTab("preview");
-  }, [name, employer, w1Hours, w2Hours, lunch, startDate, supervisor, signature]);
+  }, [name, employer, w1Hours, w2Hours, lunch, anchorDate, dateMode, supervisor, signature]);
 
   const downloadPDF = () => {
     const blob = new Blob([preview], { type: "text/html" });
@@ -319,7 +353,19 @@ export default function TimesheetApp() {
 
               <div style={cardStyle}>
                 <div style={sectionLabel}>Pay Period</div>
-                <Field label="Period Start (Monday)" value={startDate} onChange={setStartDate} type="date" />
+                <SegToggle
+                  label="Set Period By"
+                  value={dateMode}
+                  onChange={switchDateMode}
+                  options={[{ v: "start", l: "Period Start" }, { v: "end", l: "Period End" }]}
+                />
+                <Field
+                  label={dateMode === "start" ? "Period Start (Monday)" : "Period End (Sunday)"}
+                  value={anchorDate}
+                  onChange={setAnchorDate}
+                  type="date"
+                />
+                <PeriodHint anchorDate={anchorDate} dateMode={dateMode} />
                 <Field label="Lunch Break" value={lunch} onChange={v => setLunch(Number(v))} type="select"
                   options={[{v:0,l:"No lunch"},{v:30,l:"30 minutes"},{v:45,l:"45 minutes"},{v:60,l:"60 minutes"}]} />
               </div>
@@ -457,7 +503,7 @@ function ActionBtn({ onClick, icon, label, secondary }) {
   );
 }
 
-function Field({ label, value, onChange, placeholder, type = "text", options }) {
+function Field({ label, value, onChange, placeholder, type = "text", options, min, max }) {
   const inputStyle = {
     boxSizing: "border-box",
     width: "100%",
@@ -470,6 +516,9 @@ function Field({ label, value, onChange, placeholder, type = "text", options }) 
     fontFamily: "Georgia, serif",
     marginTop: 4,
     outline: "none",
+    // Render native date/time pickers in dark mode so the calendar icon is
+    // visible against the dark input and the popup calendar is themed.
+    colorScheme: "dark",
   };
   return (
     <div style={{ marginBottom: 14 }}>
@@ -480,8 +529,45 @@ function Field({ label, value, onChange, placeholder, type = "text", options }) 
         </select>
       ) : (
         <input type={type} value={value} onChange={e => onChange(e.target.value)}
-          placeholder={placeholder} style={inputStyle} />
+          placeholder={placeholder} min={min} max={max} style={inputStyle} />
       )}
+    </div>
+  );
+}
+
+function SegToggle({ label, value, onChange, options }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "#8888aa" }}>{label}</label>
+      <div style={{ display: "flex", marginTop: 6, border: "1px solid #2a2a5a", borderRadius: 6, overflow: "hidden" }}>
+        {options.map((o) => {
+          const active = o.v === value;
+          return (
+            <button key={o.v} onClick={() => onChange(o.v)} style={{
+              flex: 1,
+              padding: "9px 10px",
+              background: active ? "linear-gradient(135deg, #f0a040 0%, #e07020 100%)" : "transparent",
+              border: "none",
+              color: active ? "#1a0a00" : "#8888aa",
+              fontSize: 13,
+              fontWeight: active ? "bold" : "normal",
+              fontFamily: "Georgia, serif",
+              cursor: "pointer",
+            }}>{o.l}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PeriodHint({ anchorDate, dateMode }) {
+  if (!anchorDate) return null;
+  const { start, end } = resolvePeriod(anchorDate, dateMode);
+  const fmt = (d) => d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  return (
+    <div style={{ fontSize: 11, color: "#666688", margin: "-6px 0 14px" }}>
+      Period: <span style={{ color: "#8888cc" }}>{fmt(start)} → {fmt(end)}</span>
     </div>
   );
 }
