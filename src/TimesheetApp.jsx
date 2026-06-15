@@ -73,7 +73,17 @@ function generateTimesheetRows(totalHoursW1, totalHoursW2, startDate, lunchMins 
   });
 }
 
-function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW2, supervisor, signature) {
+function buildFileBase(name, endDate) {
+  // e.g. "Jane Smith" + period ending 2026-06-07 -> "Jane_Smith_timesheet_2026-06-07"
+  const date = endDate.toISOString().split("T")[0];
+  const safeName = (name || "")
+    .trim()
+    .replace(/[^\w\s-]/g, "")   // drop characters unsafe in filenames
+    .replace(/\s+/g, "_");      // spaces -> underscores
+  return safeName ? `${safeName}_timesheet_${date}` : `timesheet_${date}`;
+}
+
+function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW2, supervisor, signature, fileBase) {
   const signedDate = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   const week1 = rows.filter(r => r.weekNum === 1);
   const week2 = rows.filter(r => r.weekNum === 2);
@@ -94,6 +104,7 @@ function generatePDFHTML(rows, name, employer, period, totalHoursW1, totalHoursW
 <html>
 <head>
 <meta charset="UTF-8">
+<title>${fileBase}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Georgia', serif; color: #1a1a2e; background: #fff; padding: 40px; }
@@ -193,6 +204,7 @@ export default function TimesheetApp() {
   const [preview, setPreview] = useState(null);
   const [rows, setRows] = useState(null);
   const [tab, setTab] = useState("setup");
+  const [fileBase, setFileBase] = useState("timesheet");
   const [signature, setSignatureState] = useState(() => {
     if (typeof window === "undefined") return "";
     try { return window.localStorage.getItem(SIGNATURE_STORAGE_KEY) || ""; } catch { return ""; }
@@ -212,9 +224,11 @@ export default function TimesheetApp() {
     const endDate = new Date(sd);
     endDate.setDate(endDate.getDate() + 13);
     const period = `${sd.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-    const html = generatePDFHTML(newRows, name, employer, period, w1Hours, w2Hours, supervisor, signature);
+    const base = buildFileBase(name, endDate);
+    const html = generatePDFHTML(newRows, name, employer, period, w1Hours, w2Hours, supervisor, signature, base);
     setPreview(html);
     setRows(newRows);
+    setFileBase(base);
     setTab("preview");
   }, [name, employer, w1Hours, w2Hours, lunch, startDate, supervisor, signature]);
 
@@ -223,7 +237,7 @@ export default function TimesheetApp() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `timesheet_${startDate}.html`;
+    a.download = `${fileBase}.html`;
     a.click();
     URL.revokeObjectURL(url);
   };
